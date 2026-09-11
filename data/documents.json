@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "filename": "docker.md",
+    "content": "# Docker"
+  },
+  {
+    "id": 2,
+    "filename": "docker.md",
+    "content": "## What is Docker?\n\nDocker is a platform used to package applications and their dependencies into lightweight, portable containers. Containers allow applications to run consistently across different environments."
+  },
+  {
+    "id": 3,
+    "filename": "docker.md",
+    "content": "## Docker Containers\n\nA Docker container is an isolated runtime environment containing an application and the dependencies required to run it. Containers share the host operating system kernel but remain isolated from other containers."
+  },
+  {
+    "id": 4,
+    "filename": "docker.md",
+    "content": "## Dockerfile\n\nA Dockerfile is a text file containing instructions used to build a Docker image. Common instructions include FROM, RUN, COPY, WORKDIR, and CMD."
+  },
+  {
+    "id": 5,
+    "filename": "docker.md",
+    "content": "## Docker Image\n\nA Docker image is a read-only template used to create containers. Images contain the application code, libraries, dependencies, and configuration required by the application."
+  },
+  {
+    "id": 6,
+    "filename": "docker.md",
+    "content": "## Docker Compose\n\nDocker Compose is a tool used to define and run multi-container applications. A Compose configuration describes services, networks, volumes, and other resources required by an application."
+  },
+  {
+    "id": 7,
+    "filename": "docker.md",
+    "content": "## Common Docker Commands"
+  },
+  {
+    "id": 8,
+    "filename": "docker.md",
+    "content": "### Build an image\n\ndocker build -t myapp ."
+  },
+  {
+    "id": 9,
+    "filename": "docker.md",
+    "content": "### Run a container\n\ndocker run myapp"
+  },
+  {
+    "id": 10,
+    "filename": "docker.md",
+    "content": "### List running containers\n\ndocker ps"
+  },
+  {
+    "id": 11,
+    "filename": "docker.md",
+    "content": "### Stop a container\n\ndocker stop <container>"
+  },
+  {
+    "id": 12,
+    "filename": "docker.md",
+    "content": "## Docker and DevAssist AI\n\nDevAssist AI can use technical documentation such as this document as a knowledge source. During the retrieval stage, relevant sections can be retrieved and provided to the language model as context."
+  }
+]
