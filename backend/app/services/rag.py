@@ -1,30 +1,35 @@
-from backend.app.services.retriever import retrieve
+from backend.app.services.retriever import retrieve, DEFAULT_THRESHOLD
+
+OUT_OF_DOMAIN_RESPONSE = "I couldn't find relevant information in the indexed documentation."
 
 
-def build_prompt(question, top_k=2):
-    results = retrieve(question, top_k=top_k)
+def build_prompt(question, top_k=2, similarity_threshold=DEFAULT_THRESHOLD):
+    results = retrieve(question, top_k=top_k, similarity_threshold=similarity_threshold)
+
+    if not results:
+        return None, [], OUT_OF_DOMAIN_RESPONSE
 
     context_parts = []
-
     for result in results:
         context_parts.append(
-            f"Source: {result['filename']}\n"
-            f"Section:\n{result['content']}"
+            f"Source File: {result['filename']}\n"
+            f"Section: {result['section']}\n"
+            f"Content:\n{result['content']}"
         )
 
     context = "\n\n---\n\n".join(context_parts)
 
     prompt = f"""You are DevAssist AI, a technical documentation assistant.
 
-Answer the user's question using the provided documentation.
+Answer the user's question using ONLY the provided documentation context.
 
 Rules:
 - Use the documentation as the primary source.
 - Do not invent information that is not supported by the documentation.
-- If the documentation does not contain enough information, say so.
-- Give a clear and concise technical answer.
+- If the documentation does not contain enough information, say "{OUT_OF_DOMAIN_RESPONSE}".
+- Give a clear, direct, and concise technical answer without unnecessary filler.
 
-DOCUMENTATION:
+DOCUMENTATION CONTEXT:
 {context}
 
 USER QUESTION:
@@ -33,26 +38,17 @@ USER QUESTION:
 ANSWER:
 """
 
-    return prompt, results
+    return prompt, results, None
 
 
 if __name__ == "__main__":
-    question = input("Ask a question: ")
+    for q in ["What is Docker?", "What is quantum computing?"]:
+        print("\n" + "=" * 60)
+        print(f"QUESTION: {q}")
+        prompt, sources, fallback = build_prompt(q)
+        if fallback:
+            print(f"FALLBACK RESPONSE: {fallback}")
+        else:
+            print(f"PROMPT GENERATED ({len(sources)} sources):")
+            print(prompt[:300] + "...")
 
-    prompt, results = build_prompt(question)
-
-    print("\n" + "=" * 60)
-    print("GENERATED RAG PROMPT")
-    print("=" * 60)
-    print(prompt)
-
-    print("\n" + "=" * 60)
-    print("RETRIEVED SOURCES")
-    print("=" * 60)
-
-    for result in results:
-        print(
-            f"{result['filename']} | "
-            f"Chunk {result['id']} | "
-            f"Similarity: {result['score']:.4f}"
-        )

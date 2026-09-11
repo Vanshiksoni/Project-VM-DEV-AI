@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -8,8 +9,9 @@ DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 INDEX_FILE = DATA_DIR / "documents.json"
 EMBEDDINGS_FILE = DATA_DIR / "embeddings.json"
 
-OLLAMA_URL = "http://127.0.0.1:11434/api/embed"
-MODEL = "nomic-embed-text"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_URL = f"{OLLAMA_BASE_URL.rstrip('/')}/api/embed"
+MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
 
 
 def create_embedding(client, text):
@@ -33,11 +35,8 @@ def create_embeddings():
 
     results = []
 
-    # Process one document chunk at a time
     with httpx.Client(timeout=120.0) as client:
-
         for document in documents:
-
             print(
                 f"Embedding chunk {document['id']} "
                 f"of {len(documents)}..."
@@ -52,25 +51,22 @@ def create_embeddings():
                 {
                     "id": document["id"],
                     "filename": document["filename"],
+                    "section": document.get("section", "General"),
                     "content": document["content"],
                     "embedding": embedding,
                 }
             )
 
-            # Save after every chunk
-            EMBEDDINGS_FILE.write_text(
-                json.dumps(results),
-                encoding="utf-8",
-            )
-
-            print(
-                f"Saved chunk {document['id']}"
-            )
+    EMBEDDINGS_FILE.write_text(
+        json.dumps(results),
+        encoding="utf-8",
+    )
 
     print(
-        f"\nCompleted {len(results)} embeddings."
+        f"\nCompleted {len(results)} embeddings. Saved to: {EMBEDDINGS_FILE}"
     )
 
 
 if __name__ == "__main__":
     create_embeddings()
+

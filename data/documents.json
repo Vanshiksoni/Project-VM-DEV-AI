@@ -2,61 +2,61 @@
   {
     "id": 1,
     "filename": "docker.md",
-    "content": "# Docker"
+    "section": "What is Docker?",
+    "content": "# Docker\n\n## What is Docker?\n\nDocker is a platform used to package applications and their dependencies into lightweight, portable containers. Containers allow applications to run consistently across different environments."
   },
   {
     "id": 2,
     "filename": "docker.md",
-    "content": "## What is Docker?\n\nDocker is a platform used to package applications and their dependencies into lightweight, portable containers. Containers allow applications to run consistently across different environments."
+    "section": "Docker Containers",
+    "content": "## Docker Containers\n\nA Docker container is an isolated runtime environment containing an application and the dependencies required to run it. Containers share the host operating system kernel but remain isolated from other containers."
   },
   {
     "id": 3,
     "filename": "docker.md",
-    "content": "## Docker Containers\n\nA Docker container is an isolated runtime environment containing an application and the dependencies required to run it. Containers share the host operating system kernel but remain isolated from other containers."
+    "section": "Dockerfile",
+    "content": "## Dockerfile\n\nA Dockerfile is a text file containing instructions used to build a Docker image. Common instructions include FROM, RUN, COPY, WORKDIR, and CMD."
   },
   {
     "id": 4,
     "filename": "docker.md",
-    "content": "## Dockerfile\n\nA Dockerfile is a text file containing instructions used to build a Docker image. Common instructions include FROM, RUN, COPY, WORKDIR, and CMD."
+    "section": "Docker Image",
+    "content": "## Docker Image\n\nA Docker image is a read-only template used to create containers. Images contain the application code, libraries, dependencies, and configuration required by the application."
   },
   {
     "id": 5,
     "filename": "docker.md",
-    "content": "## Docker Image\n\nA Docker image is a read-only template used to create containers. Images contain the application code, libraries, dependencies, and configuration required by the application."
+    "section": "Docker Compose",
+    "content": "## Docker Compose\n\nDocker Compose is a tool used to define and run multi-container applications. A Compose configuration describes services, networks, volumes, and other resources required by an application."
   },
   {
     "id": 6,
     "filename": "docker.md",
-    "content": "## Docker Compose\n\nDocker Compose is a tool used to define and run multi-container applications. A Compose configuration describes services, networks, volumes, and other resources required by an application."
+    "section": "Build an image",
+    "content": "## Common Docker Commands\n\n### Build an image\n\ndocker build -t myapp ."
   },
   {
     "id": 7,
     "filename": "docker.md",
-    "content": "## Common Docker Commands"
+    "section": "Run a container",
+    "content": "### Run a container\n\ndocker run myapp"
   },
   {
     "id": 8,
     "filename": "docker.md",
-    "content": "### Build an image\n\ndocker build -t myapp ."
+    "section": "List running containers",
+    "content": "### List running containers\n\ndocker ps"
   },
   {
     "id": 9,
     "filename": "docker.md",
-    "content": "### Run a container\n\ndocker run myapp"
+    "section": "Stop a container",
+    "content": "### Stop a container\n\ndocker stop <container>"
   },
   {
     "id": 10,
     "filename": "docker.md",
-    "content": "### List running containers\n\ndocker ps"
-  },
-  {
-    "id": 11,
-    "filename": "docker.md",
-    "content": "### Stop a container\n\ndocker stop <container>"
-  },
-  {
-    "id": 12,
-    "filename": "docker.md",
+    "section": "Docker and DevAssist AI",
     "content": "## Docker and DevAssist AI\n\nDevAssist AI can use technical documentation such as this document as a knowledge source. During the retrieval stage, relevant sections can be retrieved and provided to the language model as context."
   }
 ]

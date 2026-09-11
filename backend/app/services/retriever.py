@@ -1,5 +1,6 @@
 import json
 import math
+import os
 from pathlib import Path
 
 import httpx
@@ -8,8 +9,10 @@ import httpx
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 EMBEDDINGS_FILE = DATA_DIR / "embeddings.json"
 
-OLLAMA_URL = "http://127.0.0.1:11434/api/embed"
-MODEL = "nomic-embed-text"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_URL = f"{OLLAMA_BASE_URL.rstrip('/')}/api/embed"
+MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
+DEFAULT_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.60"))
 
 
 def cosine_similarity(vector_a, vector_b):
@@ -46,7 +49,10 @@ def embed_query(question):
         return data["embeddings"][0]
 
 
-def retrieve(question, top_k=2):
+def retrieve(question, top_k=2, similarity_threshold=DEFAULT_THRESHOLD):
+    if not EMBEDDINGS_FILE.exists():
+        return []
+
     documents = json.loads(
         EMBEDDINGS_FILE.read_text(encoding="utf-8")
     )
@@ -61,14 +67,16 @@ def retrieve(question, top_k=2):
             document["embedding"],
         )
 
-        results.append(
-            {
-                "id": document["id"],
-                "filename": document["filename"],
-                "content": document["content"],
-                "score": score,
-            }
-        )
+        if score >= similarity_threshold:
+            results.append(
+                {
+                    "id": document["id"],
+                    "filename": document["filename"],
+                    "section": document.get("section", "General"),
+                    "content": document["content"],
+                    "score": score,
+                }
+            )
 
     results.sort(
         key=lambda item: item["score"],
@@ -79,16 +87,16 @@ def retrieve(question, top_k=2):
 
 
 if __name__ == "__main__":
-    question = input("Ask a documentation question: ")
+    test_questions = [
+        "What is Docker?",
+        "What is Docker Compose?",
+        "What is quantum computing?",
+    ]
 
-    results = retrieve(question)
+    for q in test_questions:
+        print(f"\nQuestion: {q}")
+        matches = retrieve(q, top_k=2, similarity_threshold=0.60)
+        print(f"Retrieved {len(matches)} relevant chunk(s):")
+        for res in matches:
+            print(f"  - [{res['filename']} | Chunk {res['id']} | {res['section']}] Similarity: {res['score']:.4f}")
 
-    print("\nTop relevant chunks:\n")
-
-    for result in results:
-        print("=" * 60)
-        print(f"Chunk ID: {result['id']}")
-        print(f"Source: {result['filename']}")
-        print(f"Similarity: {result['score']:.4f}")
-        print()
-        print(result["content"])
