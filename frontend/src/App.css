@@ -190,14 +190,24 @@ input {
 }
 
 .sidebar-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
   padding: 12px;
   border-radius: 8px;
   margin-bottom: 25px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sidebar-item.active {
   background: #f3f4f6;
 }
+
 
 .section-title {
   margin-top: 30px !important;

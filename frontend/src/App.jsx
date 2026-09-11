@@ -1,6 +1,8 @@
 import { useState } from "react";
 import "./App.css";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
 function App() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
@@ -25,14 +27,16 @@ function App() {
     setLoading(true);
 
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/ask?question=${encodeURIComponent(
-          userQuestion
-        )}`
-      );
+      const response = await fetch(`${API_BASE_URL}/ask`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question: userQuestion }),
+      });
 
       if (!response.ok) {
-        throw new Error("Backend request failed");
+        throw new Error(`Server returned HTTP ${response.status}`);
       }
 
       const data = await response.json();
@@ -52,8 +56,7 @@ function App() {
         ...prev,
         {
           role: "assistant",
-          content:
-            "Sorry, I could not connect to the DevAssist AI backend.",
+          content: "Sorry, could not connect to the DevAssist AI backend server.",
           sources: [],
         },
       ]);
@@ -62,8 +65,12 @@ function App() {
     }
   };
 
-  const useExample = (text) => {
+  const handleSelectExample = (text) => {
     setQuestion(text);
+  };
+
+  const handleClearChat = () => {
+    setMessages([]);
   };
 
   return (
@@ -89,30 +96,36 @@ function App() {
               <h2>Welcome to DevAssist AI</h2>
 
               <p>
-                Ask technical questions and get assistance from your
-                documentation-powered AI assistant.
+                Ask technical documentation questions. Grounded answers are generated using index-backed RAG and local Code Llama inference.
               </p>
 
               <div className="examples">
-                <button onClick={() => useExample("What is Docker?")}>
+                <button onClick={() => handleSelectExample("What is Docker?")}>
                   What is Docker?
                 </button>
 
                 <button
                   onClick={() =>
-                    useExample("What is Docker Compose?")
+                    handleSelectExample("What is Docker Compose?")
                   }
                 >
                   What is Docker Compose?
                 </button>
 
                 <button
-                  onClick={() => useExample("What is a Docker image?")}
+                  onClick={() => handleSelectExample("What is a Docker image?")}
                 >
                   What is a Docker image?
                 </button>
+
+                <button
+                  onClick={() => handleSelectExample("What is quantum computing?")}
+                >
+                  What is quantum computing? (Out-of-domain test)
+                </button>
               </div>
             </div>
+
           ) : (
             <div className="messages">
               {messages.map((message, index) => (
@@ -134,7 +147,7 @@ function App() {
                     message.sources?.length > 0 && (
                       <div className="sources">
                         <div className="sources-title">
-                          Sources
+                          Retrieved Documentation Sources
                         </div>
 
                         {message.sources.map((source, sourceIndex) => (
@@ -143,14 +156,9 @@ function App() {
                             key={sourceIndex}
                           >
                             <strong>{source.filename}</strong>
-
-                            <span>
-                              Chunk {source.chunk_id}
-                            </span>
-
-                            <span>
-                              Similarity: {source.similarity}
-                            </span>
+                            <span>Section: <em>{source.section || "General"}</em></span>
+                            <span>Chunk ID: #{source.chunk_id}</span>
+                            <span>Similarity: {source.similarity}</span>
                           </div>
                         ))}
                       </div>
@@ -165,7 +173,7 @@ function App() {
                   </div>
 
                   <div className="message-content">
-                    Thinking...
+                    Retrieving context & generating grounded answer...
                   </div>
                 </div>
               )}
@@ -190,10 +198,10 @@ function App() {
         <aside className="sidebar">
           <h3>Assistant</h3>
 
-          <div className="sidebar-item active">
+          <button className="sidebar-item active" onClick={handleClearChat}>
             <span>💬</span>
             New Chat
-          </div>
+          </button>
 
           <h3 className="section-title">Features</h3>
 
@@ -201,23 +209,23 @@ function App() {
             <span>📚</span>
             <div>
               <strong>Documentation</strong>
-              <p>Search indexed documentation</p>
+              <p>Indexed Markdown docs</p>
             </div>
           </div>
 
           <div className="feature">
-            <span>🔎</span>
+            <span>🎯</span>
             <div>
-              <strong>Sources</strong>
-              <p>See where answers come from</p>
+              <strong>Grounding</strong>
+              <p>Zero-hallucination thresholding</p>
             </div>
           </div>
 
           <div className="feature">
             <span>🧠</span>
             <div>
-              <strong>RAG</strong>
-              <p>Context-aware responses</p>
+              <strong>RAG Architecture</strong>
+              <p>Nomic Embed + Code Llama</p>
             </div>
           </div>
         </aside>
@@ -227,3 +235,4 @@ function App() {
 }
 
 export default App;
+
