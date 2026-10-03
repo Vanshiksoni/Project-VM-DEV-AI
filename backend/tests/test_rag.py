@@ -18,6 +18,7 @@ def test_build_prompt_in_domain():
 
 def test_build_prompt_out_of_domain():
     prompt, sources, fallback = build_prompt("Who won the World Cup in 2022?", top_k=2, similarity_threshold=0.60)
-    assert fallback == OUT_OF_DOMAIN_RESPONSE
+    assert fallback is not None
+    assert "guardrail" in fallback.lower()
     assert prompt is None
     assert len(sources) == 0

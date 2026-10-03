@@ -1,11 +1,10 @@
 from pathlib import Path
-
-DOCS_DIR = Path(__file__).resolve().parents[3] / "docs"
+from backend.app.services.document_loader import load_documents
 
 
 def chunk_text(text: str, max_chars: int = 1000):
     """
-    Chunks markdown text into meaningful semantic sections.
+    Chunks text into meaningful semantic sections.
     Preserves section titles and filters out standalone heading-only chunks.
     Returns a list of dicts: [{"section": str, "content": str}]
     """
@@ -16,9 +15,8 @@ def chunk_text(text: str, max_chars: int = 1000):
 
     for line in lines:
         stripped = line.strip()
-        # Check for top-level or sub-level Markdown headings (# Heading, ## Section, ### Subsection)
+        # Check for top-level or sub-level headings (# Heading, ## Section, ### Subsection)
         if stripped.startswith("#"):
-            # Non-heading content accumulated so far?
             non_heading_content = [
                 l for l in current_lines if l.strip() and not l.strip().startswith("#")
             ]
@@ -27,31 +25,29 @@ def chunk_text(text: str, max_chars: int = 1000):
                 content = "\n".join(current_lines).strip()
                 sections.append({"section": current_title, "content": content})
                 current_lines = []
-            elif current_lines:
-                # previous heading didn't have body text yet (e.g. ## Common Docker Commands before ### Build an image)
-                # Keep accumulating under the updated title if needed
-                pass
 
             heading_text = stripped.lstrip("#").strip()
             if heading_text:
                 current_title = heading_text
 
             current_lines.append(line)
+        elif stripped and len(current_lines) == 0 and not stripped.startswith("#"):
+            # If paragraph starts, use title or paragraph start as section
+            current_lines.append(line)
         else:
             current_lines.append(line)
 
     if current_lines:
-        non_heading_content = [
-            l for l in current_lines if l.strip() and not l.strip().startswith("#")
-        ]
-        if non_heading_content:
-            content = "\n".join(current_lines).strip()
+        content = "\n".join(current_lines).strip()
+        if content:
             sections.append({"section": current_title, "content": content})
+
+    if not sections:
+        sections.append({"section": "General", "content": text.strip()})
 
     final_chunks = []
     for sec in sections:
         content = sec["content"].strip()
-
         if len(content) <= max_chars:
             final_chunks.append({"section": sec["section"], "content": content})
         else:
@@ -75,31 +71,26 @@ def chunk_text(text: str, max_chars: int = 1000):
 
 
 def load_and_chunk_documents():
-    documents = []
+    documents = load_documents()
+    all_chunks = []
+    chunk_counter = 1
 
-    for file_path in DOCS_DIR.glob("*.md"):
-        text = file_path.read_text(encoding="utf-8")
-        chunks = chunk_text(text)
+    for doc in documents:
+        chunks = chunk_text(doc["content"])
+        for chunk in chunks:
+            all_chunks.append({
+                "filename": doc["filename"],
+                "chunk_id": chunk_counter,
+                "section": chunk["section"],
+                "content": chunk["content"],
+            })
+            chunk_counter += 1
 
-        for index, chunk in enumerate(chunks, start=1):
-            documents.append(
-                {
-                    "filename": file_path.name,
-                    "chunk_id": index,
-                    "section": chunk["section"],
-                    "content": chunk["content"],
-                }
-            )
-
-    return documents
+    return all_chunks
 
 
 if __name__ == "__main__":
     documents = load_and_chunk_documents()
-    print(f"Total chunks: {len(documents)}")
-
+    print(f"Total chunks across all documents: {len(documents)}")
     for doc in documents:
-        print("\n" + "=" * 60)
-        print(f"Source: {doc['filename']} | Chunk ID: {doc['chunk_id']} | Section: {doc['section']}")
-        print(doc["content"])
-
+        print(f"[{doc['filename']} | Chunk ID: {doc['chunk_id']} | {doc['section']}]")

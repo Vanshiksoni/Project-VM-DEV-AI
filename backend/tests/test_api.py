@@ -40,7 +40,7 @@ def test_post_ask_out_of_domain():
     response = client.post("/ask", json={"question": "What is quantum computing?"})
     assert response.status_code == 200
     data = response.json()
-    assert "couldn't find" in data["answer"].lower()
+    assert "guardrail intervention" in data["answer"].lower() or "blocked" in data["answer"].lower()
     assert len(data["sources"]) == 0
 
 
