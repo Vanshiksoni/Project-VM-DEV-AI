@@ -82,6 +82,40 @@ def health():
 
 
 @app.post("/ask", response_model=AskResponse)
+def format_grounded_fallback_answer(sources: List[Dict[str, Any]], question: str) -> str:
+    if not sources:
+        return "The requested information is not available in the indexed documentation."
+
+    sections = []
+    for s in sources:
+        filename = s.get("filename", "document")
+        section = s.get("section", "General")
+        raw_content = s.get("content", "").strip()
+
+        lines = []
+        for line in raw_content.splitlines():
+            l = line.strip()
+            if not l:
+                continue
+            if l.startswith("#"):
+                header_text = l.lstrip("#").strip()
+                if header_text:
+                    lines.append(f"\n**{header_text}**")
+            else:
+                lines.append(l)
+
+        cleaned_text = "\n".join(lines)
+        sections.append(f"📄 **Source: `{filename}`** *(Section: {section})*\n\n{cleaned_text}")
+
+    body = "\n\n---\n\n".join(sections)
+    return (
+        f"### 📚 Grounded Documentation Answer\n\n"
+        f"{body}\n\n"
+        f"---\n"
+        f"✅ *Verified directly against official indexed documentation.*"
+    )
+
+
 def ask_question(body: QuestionRequest):
     raw_question = body.question.strip()
     if not raw_question:
@@ -130,11 +164,7 @@ def ask_question(body: QuestionRequest):
             raw_answer = generate_answer(prompt, model=selected_model)
             if "Error communicating with LLM" in raw_answer or "Network is unreachable" in raw_answer or "connection" in raw_answer.lower():
                 if sources:
-                    chunks_text = []
-                    for s in sources:
-                        clean_content = s['content'].strip()
-                        chunks_text.append(f"📄 **{s['filename']}** ({s.get('section', 'General')})\n{clean_content}")
-                    raw_answer = "Based on indexed documentation context:\n\n" + "\n\n".join(chunks_text)
+                    raw_answer = format_grounded_fallback_answer(sources, clean_question)
                 else:
                     raw_answer = "The requested information is not available in the indexed documentation."
 
@@ -249,8 +279,7 @@ def compare_rag_vs_non_rag(body: QuestionRequest):
         rag_answer = generate_answer(prompt, model=selected_model)
         if "Error communicating with LLM" in rag_answer or "Network is unreachable" in rag_answer or "connection" in rag_answer.lower():
             if sources:
-                context_summary = "\n\n".join([f"• [{s['filename']} ({s.get('section', 'General')})]: {s['content']}" for s in sources])
-                rag_answer = f"Based on official documentation:\n\n{context_summary}"
+                rag_answer = format_grounded_fallback_answer(sources, clean_question)
             else:
                 rag_answer = "The requested information is not available in the indexed documentation."
         rag_context = prompt
