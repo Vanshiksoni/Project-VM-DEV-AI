@@ -30,7 +30,7 @@ def cosine_similarity(vector_a, vector_b):
 
 
 def embed_query(question):
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
         response = client.post(
             OLLAMA_URL,
             json={

@@ -22,7 +22,7 @@ def generate_answer(prompt: str, model: str = DEFAULT_MODEL) -> str:
     }
 
     try:
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=3.0)) as client:
             response = client.post(
                 OLLAMA_URL,
                 json=payload,
