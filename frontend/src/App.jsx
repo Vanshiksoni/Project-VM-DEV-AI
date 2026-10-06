@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import "./App.css";
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
+const getApiBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
+    return envUrl;
+  }
+  return "/api";
+};
+const API_BASE_URL = getApiBaseUrl();
 
 const AVAILABLE_MODELS = [
   {
@@ -216,13 +222,14 @@ function App() {
         ]);
       }
     } catch (error) {
-      console.error(error);
+      console.error("Backend fetch error:", error);
+      const errorDetail = error?.message ? `Backend Error: ${error.message}` : "Could not connect to the DevAssist AI backend server.";
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
           mode: "ask",
-          content: "⚠️ Could not connect to the DevAssist AI backend server.",
+          content: `⚠️ ${errorDetail}`,
           sources: [],
           guardrails: { status: "ERROR" },
         },
