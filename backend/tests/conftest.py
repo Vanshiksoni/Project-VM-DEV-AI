@@ -76,7 +76,6 @@ def mock_ollama_if_offline(monkeypatch):
         return "Docker is a platform for packaging and running applications in isolated containers."
 
     monkeypatch.setattr("backend.app.services.retriever.embed_query", mock_embed_query)
-    monkeypatch.setattr("backend.app.services.rag.embed_query", mock_embed_query)
     monkeypatch.setattr("backend.app.services.llm.generate_answer", mock_generate_answer)
     monkeypatch.setattr("backend.app.main.generate_answer", mock_generate_answer)
 
