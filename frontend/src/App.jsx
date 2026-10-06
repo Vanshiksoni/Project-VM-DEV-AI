@@ -60,6 +60,47 @@ const AVAILABLE_MODELS = [
   },
 ];
 
+// Helper function to render inline markdown (bold, code, redactions)
+function renderInlineText(text) {
+  if (!text) return null;
+
+  // 1. Redaction tags
+  if (text.includes("[") && text.includes("_REDACTED]")) {
+    const parts = text.split(/(\[[A-Z_]+_REDACTED\])/g);
+    return parts.map((part, idx) =>
+      part.endsWith("_REDACTED]") ? (
+        <span key={idx} className="pii-tag">{part}</span>
+      ) : (
+        renderInlineText(part)
+      )
+    );
+  }
+
+  // 2. Bold tags (**text**)
+  if (text.includes("**")) {
+    const parts = text.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, idx) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={idx} className="bold-highlight">{part.slice(2, -2)}</strong>;
+      }
+      return renderInlineText(part);
+    });
+  }
+
+  // 3. Inline code (`code`)
+  if (text.includes("`")) {
+    const parts = text.split(/(`[^`]+`)/g);
+    return parts.map((part, idx) => {
+      if (part.startsWith("`") && part.endsWith("`")) {
+        return <code key={idx} className="inline-code-badge">{part.slice(1, -1)}</code>;
+      }
+      return part;
+    });
+  }
+
+  return text;
+}
+
 // Rich Answer Formatter Component
 function FormattedAnswer({ text }) {
   if (!text) return null;
@@ -79,10 +120,10 @@ function FormattedAnswer({ text }) {
         <div className="callout-body">
           {details.map((line, idx) => (
             <div key={idx} className="callout-line">
-              {line.startsWith("•") ? (
-                <span className="bullet-point">{line}</span>
+              {line.startsWith("•") || line.startsWith("-") ? (
+                <span className="bullet-point">{renderInlineText(line)}</span>
               ) : (
-                <p>{line}</p>
+                <p>{renderInlineText(line)}</p>
               )}
             </div>
           ))}
@@ -91,53 +132,90 @@ function FormattedAnswer({ text }) {
     );
   }
 
-  // 2. Regular Answer Formatting
-  const paragraphs = text.split("\n\n");
+  // 2. Multi-block Rich Markdown Rendering
+  const blocks = text.split(/\n\n+/);
 
   return (
     <div className="rich-answer">
-      {paragraphs.map((p, idx) => {
-        const trimmed = p.trim();
+      {blocks.map((block, idx) => {
+        const trimmed = block.trim();
+        if (!trimmed) return null;
+
+        // Divider
+        if (trimmed === "---" || trimmed === "***") {
+          return <hr key={idx} className="rich-divider" />;
+        }
+
+        // Code Block
         if (trimmed.startsWith("```")) {
-          const codeText = trimmed.replace(/```[a-z]*/g, "").trim();
+          const firstLineEnd = trimmed.indexOf("\n");
+          const lang = firstLineEnd !== -1 ? trimmed.slice(3, firstLineEnd).trim() : "CODE";
+          const codeContent = firstLineEnd !== -1 ? trimmed.slice(firstLineEnd + 1).replace(/```$/, "").trim() : trimmed.replace(/```[a-z]*/g, "").trim();
           return (
             <div key={idx} className="code-block-wrapper">
-              <div className="code-header">Code Output</div>
-              <pre className="code-block"><code>{codeText}</code></pre>
+              <div className="code-header">
+                <span className="code-lang-tag">💻 {lang.toUpperCase() || "CODE"}</span>
+              </div>
+              <pre className="code-block"><code>{codeContent}</code></pre>
             </div>
           );
         }
 
-        if (trimmed.includes("•") || trimmed.startsWith("-")) {
-          const items = trimmed.split("\n");
+        // Headers (### Header or ## Header or # Header)
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          const level = (trimmed.match(/^#+/) || ["#"])[0].length;
+          const headerText = trimmed.replace(/^#+\s*/, "");
+          const HeaderTag = level === 1 ? "h2" : level === 2 ? "h3" : "h4";
+          return (
+            <HeaderTag key={idx} className="rich-heading">
+              <span className="heading-icon">📌</span>
+              {renderInlineText(headerText)}
+            </HeaderTag>
+          );
+        }
+
+        // Document Source Callout Header (📄 **Source: ...)
+        if (trimmed.startsWith("📄 **Source:") || trimmed.startsWith("📄 **")) {
+          return (
+            <div key={idx} className="doc-source-callout-card">
+              <div className="doc-callout-header">
+                <span className="doc-icon">📄</span>
+                <span className="doc-title">{renderInlineText(trimmed)}</span>
+              </div>
+            </div>
+          );
+        }
+
+        // Lists (- item or • item or 1. item)
+        if (trimmed.split("\n").every(line => /^[•\-\*]\s+|^\d+\.\s+/.test(line.trim()))) {
+          const items = trimmed.split("\n").filter(l => l.trim());
           return (
             <ul key={idx} className="styled-list">
               {items.map((item, itemIdx) => (
                 <li key={itemIdx}>
-                  {item.replace(/^[•\-]\s*/, "")}
+                  <span className="list-bullet-icon">✨</span>
+                  <span className="list-content">{renderInlineText(item.replace(/^[•\-\*]\s+|^\d+\.\s+/, ""))}</span>
                 </li>
               ))}
             </ul>
           );
         }
 
-        // Highlight PII Redaction Badges
-        if (trimmed.includes("[") && trimmed.includes("_REDACTED]")) {
-          const parts = trimmed.split(/(\[[A-Z_]+_REDACTED\])/g);
+        // Callouts (💡, ⚠️, ✅, 🛡️)
+        if (/^[💡⚠️✅🛡️]\s*/.test(trimmed)) {
           return (
-            <p key={idx}>
-              {parts.map((part, pIdx) =>
-                part.endsWith("_REDACTED]") ? (
-                  <span key={pIdx} className="pii-tag">{part}</span>
-                ) : (
-                  part
-                )
-              )}
-            </p>
+            <div key={idx} className="rich-callout-box">
+              <p>{renderInlineText(trimmed)}</p>
+            </div>
           );
         }
 
-        return <p key={idx}>{trimmed}</p>;
+        // Standard Paragraph
+        return (
+          <p key={idx} className="rich-paragraph">
+            {renderInlineText(trimmed)}
+          </p>
+        );
       })}
     </div>
   );
