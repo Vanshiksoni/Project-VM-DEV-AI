@@ -72,7 +72,7 @@ def mock_ollama_if_offline(monkeypatch):
         # Out-of-domain query mock embedding (all zeros, 0.0 similarity)
         return [0.0] * 768
 
-    def mock_generate_answer(prompt: str):
+    def mock_generate_answer(prompt: str, *args, **kwargs):
         return "Docker is a platform for packaging and running applications in isolated containers."
 
     monkeypatch.setattr("backend.app.services.retriever.embed_query", mock_embed_query)
