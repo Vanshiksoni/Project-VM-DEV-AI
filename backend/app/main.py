@@ -81,38 +81,48 @@ def health():
     return {"status": "healthy", "service": "DevAssist AI Backend"}
 
 
-def format_grounded_fallback_answer(sources: List[Dict[str, Any]], question: str) -> str:
+def synthesize_concise_answer(sources: List[Dict[str, Any]], question: str) -> Tuple[str, List[Dict[str, Any]]]:
     if not sources:
-        return "The requested information is not available in the indexed documentation."
+        return "The requested information is not available in the indexed documentation.", []
 
-    sections = []
+    all_q_words = [
+        w.lower()
+        for w in re.findall(r"\b\w{3,}\b", question)
+        if w.lower() not in {"what", "is", "the", "for", "are", "and", "how", "can", "with", "does", "which"}
+    ]
+
+    matched_sentences = []
+    matched_sources = []
+
     for s in sources:
-        filename = s.get("filename", "document")
-        section = s.get("section", "General")
-        raw_content = s.get("content", "").strip()
+        content = s.get("content", "")
+        cleaned_content = re.sub(r"#+\s*", "", content)
+        sentences = [sen.strip() for sen in re.split(r"(?<=[.!?])\s+", cleaned_content) if len(sen.strip()) > 12]
 
-        lines = []
-        for line in raw_content.splitlines():
-            l = line.strip()
-            if not l:
-                continue
-            if l.startswith("#"):
-                header_text = l.lstrip("#").strip()
-                if header_text:
-                    lines.append(f"\n**{header_text}**")
-            else:
-                lines.append(l)
+        source_matched = False
+        for sen in sentences:
+            sen_lower = sen.lower()
+            overlap = [w for w in all_q_words if w in sen_lower]
+            if overlap:
+                source_matched = True
+                if sen not in matched_sentences:
+                    matched_sentences.append(sen)
 
-        cleaned_text = "\n".join(lines)
-        sections.append(f"📄 **Source: `{filename}`** *(Section: {section})*\n\n{cleaned_text}")
+        if source_matched:
+            matched_sources.append(s)
 
-    body = "\n\n---\n\n".join(sections)
-    return (
-        f"### 📚 Grounded Documentation Answer\n\n"
-        f"{body}\n\n"
-        f"---\n"
-        f"✅ *Verified directly against official indexed documentation.*"
-    )
+    if not matched_sentences and sources:
+        top_s = sources[0]
+        cleaned_content = re.sub(r"#+\s*", "", top_s.get("content", ""))
+        sentences = [sen.strip() for sen in re.split(r"(?<=[.!?])\s+", cleaned_content) if len(sen.strip()) > 12]
+        matched_sentences = sentences[:2]
+        matched_sources = [top_s]
+
+    answer = " ".join(matched_sentences[:3])
+    if not answer.strip():
+        answer = "The requested information is detailed in the indexed documentation sources below."
+
+    return answer, matched_sources if matched_sources else sources[:1]
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -157,6 +167,7 @@ def ask_question(body: QuestionRequest):
             similarity_threshold=body.similarity_threshold
         )
 
+        final_sources = sources
         if fallback:
             raw_answer = fallback
             context_text = ""
@@ -164,12 +175,12 @@ def ask_question(body: QuestionRequest):
             raw_answer = generate_answer(prompt, model=selected_model)
             if "Error communicating with LLM" in raw_answer or "Network is unreachable" in raw_answer or "connection" in raw_answer.lower():
                 if sources:
-                    raw_answer = format_grounded_fallback_answer(sources, clean_question)
+                    raw_answer, final_sources = synthesize_concise_answer(sources, clean_question)
                 else:
                     raw_answer = "The requested information is not available in the indexed documentation."
+                    final_sources = []
 
             context_text = prompt
-
 
         # Step 3: Output Guardrails Check
         output_g = evaluate_output_guardrails(raw_answer, context_text)
@@ -182,7 +193,7 @@ def ask_question(body: QuestionRequest):
                 chunk_id=source["id"],
                 similarity=round(source["score"], 4),
             )
-            for source in sources
+            for source in final_sources
         ]
 
         return AskResponse(
