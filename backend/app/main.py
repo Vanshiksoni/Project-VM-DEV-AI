@@ -81,7 +81,6 @@ def health():
     return {"status": "healthy", "service": "DevAssist AI Backend"}
 
 
-@app.post("/ask", response_model=AskResponse)
 def format_grounded_fallback_answer(sources: List[Dict[str, Any]], question: str) -> str:
     if not sources:
         return "The requested information is not available in the indexed documentation."
@@ -116,6 +115,7 @@ def format_grounded_fallback_answer(sources: List[Dict[str, Any]], question: str
     )
 
 
+@app.post("/ask", response_model=AskResponse)
 def ask_question(body: QuestionRequest):
     raw_question = body.question.strip()
     if not raw_question:
