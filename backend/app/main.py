@@ -1,3 +1,4 @@
+import re
 import time
 from typing import List, Optional, Dict, Any, Tuple
 from fastapi import FastAPI, HTTPException, Query
@@ -290,7 +291,7 @@ def compare_rag_vs_non_rag(body: QuestionRequest):
         rag_answer = generate_answer(prompt, model=selected_model)
         if "Error communicating with LLM" in rag_answer or "Network is unreachable" in rag_answer or "connection" in rag_answer.lower():
             if sources:
-                rag_answer = format_grounded_fallback_answer(sources, clean_question)
+                rag_answer, sources = synthesize_concise_answer(sources, clean_question)
             else:
                 rag_answer = "The requested information is not available in the indexed documentation."
         rag_context = prompt
