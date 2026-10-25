@@ -87,3 +87,20 @@ jobs:
           file: ./frontend/Dockerfile
           push: false
           tags: devassist-frontend:latest
+
+      - name: Build Retrieval Microservice Container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./retrieval-service/Dockerfile
+          push: false
+          tags: devassist-retrieval:latest
+
+      - name: Build LLM Microservice Container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./llm-service/Dockerfile
+          push: false
+          tags: devassist-llm:latest
+

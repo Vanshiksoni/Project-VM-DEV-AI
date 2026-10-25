@@ -1,6 +1,60 @@
 name: devassist-ai
 
 services:
+  # Container 1: In-Memory Multi-Tier Cache & Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: devassist-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - devassist-net
+    restart: unless-stopped
+
+  # Container 2: Dedicated Vector & Semantic Retrieval Microservice
+  retrieval-service:
+    build:
+      context: .
+      dockerfile: retrieval-service/Dockerfile
+    container_name: devassist-retrieval
+    ports:
+      - "8001:8001"
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBED_MODEL=nomic-embed-text
+      - SIMILARITY_THRESHOLD=0.60
+      - DATA_DIR=/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - devassist-net
+    restart: unless-stopped
+
+  # Container 3: Dedicated LLM Inference & Streaming Microservice
+  llm-service:
+    build:
+      context: .
+      dockerfile: llm-service/Dockerfile
+    container_name: devassist-llm
+    ports:
+      - "8002:8002"
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - LLM_MODEL=codellama:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - devassist-net
+    restart: unless-stopped
+
+  # Container 4: API Gateway & Application Orchestrator
   backend:
     build:
       context: .
@@ -10,13 +64,26 @@ services:
       - "8000:8000"
     environment:
       - OLLAMA_URL=http://host.docker.internal:11434
+      - LLM_SERVICE_URL=http://llm-service:8002
+      - RETRIEVAL_SERVICE_URL=http://retrieval-service:8001
+      - REDIS_URL=redis://redis:6379/0
       - LLM_MODEL=codellama:latest
       - EMBED_MODEL=nomic-embed-text
       - SIMILARITY_THRESHOLD=0.60
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      retrieval-service:
+        condition: service_started
+      llm-service:
+        condition: service_started
+    networks:
+      - devassist-net
     restart: unless-stopped
 
+  # Container 5: Production React 19 Frontend & Reverse Proxy
   frontend:
     build:
       context: .
@@ -28,4 +95,13 @@ services:
       - "80:80"
     depends_on:
       - backend
+    networks:
+      - devassist-net
     restart: unless-stopped
+
+networks:
+  devassist-net:
+    driver: bridge
+
+volumes:
+  redis-data:

@@ -1,167 +1,216 @@
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+import json
+import math
+import os
 from pathlib import Path
-from sklearn.metrics.pairwise import cosine_similarity
-import re
+from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+import httpx
 
-app = FastAPI(title="Retrieval / Knowledge Base Service")
+app = FastAPI(
+    title="DevAssist AI - Semantic Retrieval Service",
+    description="Dedicated microservice for vector search, cosine similarity ranking, and dynamic indexing",
+    version="2.0.0",
+)
 
-DOCUMENT_PATH = Path("../knowledge-base/documents/academic_policies.txt")
+# Configuration
+DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
+if not DATA_DIR.exists():
+    DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
-DEFAULT_DOCUMENTS = [
-    {
-        "title": "Attendance Policy",
-        "content": "Students are expected to maintain the minimum attendance requirement specified by their university or course. Students who fall below the required attendance percentage may be subject to academic restrictions or may not be permitted to appear for certain examinations."
-    },
-    {
-        "title": "Assignment Policy",
-        "content": "Assignments must be submitted before the deadline specified by the instructor. Late submissions may receive reduced marks or may not be accepted depending on the course policy. Students should follow the submission format and instructions provided by their instructor."
-    },
-    {
-        "title": "Examination Policy",
-        "content": "Students must follow the examination schedule published by the university. Students should arrive at the examination venue before the scheduled start time and carry the required student identification and examination materials."
-    },
-    {
-        "title": "Leave Policy",
-        "content": "Students who require academic leave should follow the university's prescribed leave procedure and submit the required documentation within the specified period. Approval of leave is subject to university rules."
-    },
-    {
-        "title": "Grading Policy",
-        "content": "Students are evaluated according to the assessment structure defined for their course. This may include assignments, quizzes, practical work, mid-term examinations, final examinations, projects, and other academic activities."
-    },
-    {
-        "title": "Academic Support",
-        "content": "Students who have questions about academic procedures should contact the appropriate faculty member, academic department, student support office, or university administration."
-    }
-]
+EMBEDDINGS_FILE = DATA_DIR / "embeddings.json"
+DOCS_FILE = DATA_DIR / "documents.json"
 
-MODEL_PRECISION_SCALE = {
-    "codellama:latest": 1.24,
-    "mistral:7b": 1.12,
-    "llama3.2:3b": 0.94
-}
+OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_URL = f"{OLLAMA_BASE_URL.rstrip('/')}/api/embed"
+EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
+DEFAULT_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.60"))
 
 OUT_OF_KB_KEYWORDS = [
     "red shoes", "coffee", "voucher", "dress code", "parking",
     "wifi", "password", "cafeteria", "canteen", "bus",
     "transport", "hostel", "dorm", "party", "parties",
-    "movie", "game", "gaming", "shoe", "shirt"
+    "movie", "game", "gaming", "shoe", "shirt", "quantum computing"
 ]
 
-USE_SENTENCE_TRANSFORMERS = False
-try:
-    from sentence_transformers import SentenceTransformer
-    USE_SENTENCE_TRANSFORMERS = True
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-except Exception:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    USE_SENTENCE_TRANSFORMERS = False
+
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Query string for semantic search")
+    top_k: Optional[int] = Field(default=2, ge=1, le=10)
+    similarity_threshold: Optional[float] = Field(default=DEFAULT_THRESHOLD, ge=0.0, le=1.0)
 
 
-def load_document():
-    if DOCUMENT_PATH.exists():
-        text = DOCUMENT_PATH.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    return "\n\n".join(f"{doc['title']}\n{doc['content']}" for doc in DEFAULT_DOCUMENTS)
+class SearchResultItem(BaseModel):
+    id: int
+    filename: str
+    section: str
+    content: str
+    score: float
 
 
-def chunk_document():
-    content = load_document()
-    if not content:
-        return []
-    sections = content.split("\n\n")
-    return [section.strip() for section in sections if section.strip()]
+class SearchResponse(BaseModel):
+    query: str
+    results: List[SearchResultItem]
+    top_k: int
+    similarity_threshold: float
+    refusal_reason: Optional[str] = None
+
+
+def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
+    mag_a = math.sqrt(sum(a * a for a in vec_a))
+    mag_b = math.sqrt(sum(b * b for b in vec_b))
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot_product / (mag_a * mag_b)
+
+
+def embed_query_vector(text: str) -> List[float]:
+    with httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+        res = client.post(
+            OLLAMA_URL,
+            json={"model": EMBED_MODEL, "input": text},
+        )
+        res.raise_for_status()
+        return res.json()["embeddings"][0]
 
 
 @app.get("/")
 def root():
     return {
-        "service": "Retrieval / Knowledge Base Service",
-        "status": "running",
-        "engine": "SentenceTransformers" if USE_SENTENCE_TRANSFORMERS else "TF-IDF (Scikit-Learn)"
+        "service": "DevAssist AI - Retrieval Microservice",
+        "status": "online",
+        "version": "2.0.0",
+        "endpoints": ["/health", "POST /search", "GET /search", "GET /documents", "POST /index"]
     }
 
 
-@app.get("/knowledge")
-def get_knowledge():
-    content = load_document()
+@app.get("/health")
+def health():
+    indexed_count = 0
+    if EMBEDDINGS_FILE.exists():
+        try:
+            docs = json.loads(EMBEDDINGS_FILE.read_text(encoding="utf-8"))
+            indexed_count = len(docs)
+        except Exception:
+            pass
     return {
-        "document": "academic_policies.txt",
-        "content": content
+        "status": "healthy",
+        "service": "retrieval-service",
+        "indexed_chunks": indexed_count,
+        "model": EMBED_MODEL,
+        "embeddings_file": str(EMBEDDINGS_FILE),
     }
 
 
-@app.get("/chunks")
-def get_chunks():
-    chunks = chunk_document()
-    return {
-        "document": "academic_policies.txt",
-        "number_of_chunks": len(chunks),
-        "chunks": chunks
-    }
-
-
-@app.get("/search")
-def search(query: str, model: str = "llama3.2:3b"):
-    chunks = chunk_document()
-    if not chunks:
-        return {"query": query, "relevant_context": []}
-
+@app.post("/search", response_model=SearchResponse)
+def search_documents(req: SearchRequest):
+    query = req.query.strip()
     query_lower = query.lower()
 
-    # Out-of-KB Keyword Filter Guardrail
+    # Guardrail: check out-of-KB patterns
     for kw in OUT_OF_KB_KEYWORDS:
         if kw in query_lower:
-            return {
-                "query": query,
-                "model_evaluated": model,
-                "relevant_context": [],
-                "out_of_kb_detected": True
-            }
+            return SearchResponse(
+                query=query,
+                results=[],
+                top_k=req.top_k,
+                similarity_threshold=req.similarity_threshold,
+                refusal_reason=f"OUT_OF_DOMAIN_KEYWORD:{kw}"
+            )
 
-    if USE_SENTENCE_TRANSFORMERS:
-        chunk_vectors = embedding_model.encode(chunks)
-        query_vector = embedding_model.encode([query])
-        scores = cosine_similarity(query_vector, chunk_vectors)[0]
-    else:
-        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
-        all_vectors = vectorizer.fit_transform(chunks)
-        query_vector = vectorizer.transform([query])
-        scores = cosine_similarity(query_vector, all_vectors)[0]
+    if not EMBEDDINGS_FILE.exists():
+        return SearchResponse(
+            query=query,
+            results=[],
+            top_k=req.top_k,
+            similarity_threshold=req.similarity_threshold,
+            refusal_reason="INDEX_NOT_FOUND"
+        )
 
-    model_scale = MODEL_PRECISION_SCALE.get(model, 1.0)
-    results = []
+    try:
+        documents = json.loads(EMBEDDINGS_FILE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read index: {str(exc)}")
 
-    domain_keywords = ["assignment", "attendance", "examination", "exam", "leave", "grading", "grade", "support", "policy", "rule", "marks", "deadline"]
-    has_domain_match = any(kw in query_lower for kw in domain_keywords)
+    # Try dense semantic embedding retrieval
+    try:
+        q_vec = embed_query_vector(query)
+        scored = []
+        for doc in documents:
+            sim = cosine_similarity(q_vec, doc.get("embedding", []))
+            if sim >= req.similarity_threshold:
+                scored.append(
+                    SearchResultItem(
+                        id=doc["id"],
+                        filename=doc.get("filename", "unknown"),
+                        section=doc.get("section", "General"),
+                        content=doc.get("content", ""),
+                        score=round(sim, 4),
+                    )
+                )
+        scored.sort(key=lambda x: x.score, reverse=True)
+        if not scored:
+            return SearchResponse(
+                query=query,
+                results=[],
+                top_k=req.top_k,
+                similarity_threshold=req.similarity_threshold,
+                refusal_reason="NO_HIGH_CONFIDENCE_MATCH"
+            )
+        return SearchResponse(
+            query=query,
+            results=scored[:req.top_k],
+            top_k=req.top_k,
+            similarity_threshold=req.similarity_threshold,
+            refusal_reason=None
+        )
+    except Exception:
+        # Fallback to lexical keyword matching if embedding API is offline
+        scored = []
+        for doc in documents:
+            content_lower = doc.get("content", "").lower()
+            overlap = [w for w in query_lower.split() if len(w) > 3 and w in content_lower]
+            if overlap:
+                score = min(0.95, 0.5 + (len(overlap) * 0.30))
+                if score >= req.similarity_threshold:
+                    scored.append(
+                        SearchResultItem(
+                            id=doc["id"],
+                            filename=doc.get("filename", "unknown"),
+                            section=doc.get("section", "General"),
+                            content=doc.get("content", ""),
+                            score=round(score, 4),
+                        )
+                    )
+        scored.sort(key=lambda x: x.score, reverse=True)
+        return SearchResponse(
+            query=query,
+            results=scored[:req.top_k],
+            top_k=req.top_k,
+            similarity_threshold=req.similarity_threshold,
+            refusal_reason=None if scored else "NO_HIGH_CONFIDENCE_MATCH"
+        )
 
-    for i, (chunk, score) in enumerate(zip(chunks, scores)):
-        raw_score = float(score)
-        chunk_lower = chunk.lower()
 
-        # Keyword boost for TF-IDF precision
-        keyword_match_cnt = sum(1 for kw in domain_keywords if kw in query_lower and kw in chunk_lower)
-        final_score = raw_score + (keyword_match_cnt * 0.35)
-
-        if raw_score < 0.02 and not has_domain_match:
-            continue
-
-        scaled_score = min(0.98, max(0.30, final_score * model_scale))
-
-        results.append({
-            "chunk": chunk,
-            "score": round(scaled_score, 4)
-        })
-
-    results.sort(key=lambda x: x["score"], reverse=True)
-    top_results = results[:2] if has_domain_match or (results and results[0]["score"] > 0.40) else []
-
-    return {
-        "query": query,
-        "model_evaluated": model,
-        "relevant_context": top_results
-    }
+@app.get("/search", response_model=SearchResponse)
+def search_get(query: str, top_k: int = 2, threshold: float = DEFAULT_THRESHOLD):
+    return search_documents(SearchRequest(query=query, top_k=top_k, similarity_threshold=threshold))
 
 
-app.mount("/ui", StaticFiles(directory="static", html=True), name="ui")
+@app.get("/documents")
+def list_documents():
+    if not EMBEDDINGS_FILE.exists():
+        return {"documents": [], "total_chunks": 0}
+    try:
+        documents = json.loads(EMBEDDINGS_FILE.read_text(encoding="utf-8"))
+        files = {}
+        for d in documents:
+            fname = d.get("filename", "unknown")
+            files[fname] = files.get(fname, 0) + 1
+        return {
+            "total_chunks": len(documents),
+            "files": [{"filename": k, "chunks_count": v} for k, v in files.items()]
+        }
+    except Exception as exc:
+        return {"error": str(exc), "total_chunks": 0}

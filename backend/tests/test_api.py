@@ -55,3 +55,38 @@ def test_get_ask_backwards_compatible():
     data = response.json()
     assert data["question"] == "What is a Dockerfile?"
     assert len(data["sources"]) > 0
+
+
+def test_system_metrics_endpoint():
+    response = client.get("/system/metrics")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "cache" in data
+    assert "uptime_seconds" in data
+    assert "active_threads" in data
+
+
+def test_documents_endpoint():
+    response = client.get("/documents")
+    assert response.status_code == 200
+    data = response.json()
+    assert "total_chunks" in data
+    assert data["total_chunks"] >= 0
+
+
+def test_documents_reindex_endpoint():
+    response = client.post("/documents/reindex")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["chunks_indexed"] > 0
+
+
+def test_ask_stream_endpoint():
+    response = client.post("/ask/stream", json={"question": "What is Docker?"})
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    text = response.text
+    assert "event: step" in text or "event: token" in text or "event: done" in text
+
