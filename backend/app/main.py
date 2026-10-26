@@ -24,8 +24,13 @@ from backend.app.services.cache import (
     make_cache_key,
     get_cache_stats,
     record_saved_latency,
+    clear_cache,
 )
-from backend.app.services.indexer import build_index
+from backend.app.services.indexer import (
+    build_index,
+    ensure_realtime_sync,
+    has_knowledge_base_changed,
+)
 
 _START_TIME = time.time()
 _ACTIVE_REQUESTS = 0
@@ -52,6 +57,11 @@ class QuestionRequest(BaseModel):
     model: Optional[str] = Field(default="codellama:latest", description="Selected LLM model")
     top_k: Optional[int] = Field(default=2, ge=1, le=5)
     similarity_threshold: Optional[float] = Field(default=0.60, ge=0.0, le=1.0)
+
+
+class DocumentContentRequest(BaseModel):
+    filename: str = Field(..., min_length=1, description="Document filename, e.g. custom_policy.md")
+    content: str = Field(..., min_length=1, description="Markdown or text content to index in real time")
 
 
 class SourceItem(BaseModel):
@@ -131,9 +141,10 @@ def get_system_metrics():
 
 @app.get("/documents")
 def get_documents_status():
-    data_dir = Path(__file__).resolve().parents[2] / "data"
+    base_dir = Path(__file__).resolve().parents[2]
+    data_dir = base_dir / "data"
+    kb_dir = base_dir / "knowledge-base" / "documents"
     embeddings_file = data_dir / "embeddings.json"
-    docs_file = data_dir / "documents.json"
     
     total_chunks = 0
     file_breakdown = {}
@@ -146,11 +157,23 @@ def get_documents_status():
                 file_breakdown[fname] = file_breakdown.get(fname, 0) + 1
         except Exception:
             pass
-            
+
+    # Read active knowledge-base files
+    raw_files = []
+    if kb_dir.exists():
+        for p in sorted(list(kb_dir.glob("*.md")) + list(kb_dir.glob("*.txt"))):
+            raw_files.append({
+                "filename": p.name,
+                "size_bytes": p.stat().st_size,
+                "modified": time.ctime(p.stat().st_mtime)
+            })
+
     return {
         "status": "indexed",
         "total_chunks": total_chunks,
         "sources": [{"filename": k, "chunks": v} for k, v in file_breakdown.items()],
+        "raw_files": raw_files,
+        "realtime_dirty": has_knowledge_base_changed(),
         "last_updated": time.ctime(embeddings_file.stat().st_mtime) if embeddings_file.exists() else None
     }
 
@@ -158,58 +181,109 @@ def get_documents_status():
 @app.post("/documents/reindex")
 def reindex_documents():
     try:
-        index = build_index()
+        cleared = clear_cache()
+        index = build_index(sync_embeddings_now=True, force_recompute_embeddings=False)
         return {
             "status": "success",
-            "message": f"Successfully re-indexed {len(index)} document chunks dynamically.",
-            "chunks_indexed": len(index)
+            "message": f"Successfully re-indexed {len(index)} document chunks with real-time vector embeddings.",
+            "chunks_indexed": len(index),
+            "embeddings_synced": True,
+            "cache_cleared": cleared,
+            "timestamp": time.time()
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Reindexing failed: {str(exc)}")
+
+
+@app.post("/documents/content")
+def save_document_content(doc: DocumentContentRequest):
+    base_dir = Path(__file__).resolve().parents[2]
+    kb_dir = base_dir / "knowledge-base" / "documents"
+    kb_dir.mkdir(parents=True, exist_ok=True)
+
+    fname = doc.filename.strip()
+    # sanitize filename
+    fname = re.sub(r"[^\w\s\.-]", "", fname).strip()
+    if not (fname.endswith(".md") or fname.endswith(".txt")):
+        fname = f"{fname}.md"
+
+    target_path = kb_dir / fname
+    target_path.write_text(doc.content, encoding="utf-8")
+
+    # Immediate real-time sync
+    index = build_index(sync_embeddings_now=True, force_recompute_embeddings=False)
+    cleared = clear_cache()
+
+    return {
+        "status": "success",
+        "message": f"Successfully saved '{fname}' and updated real-time vector embeddings.",
+        "filename": fname,
+        "chunks_indexed": len(index),
+        "cache_cleared": cleared,
+    }
+
+
+@app.delete("/documents/{filename}")
+def delete_document(filename: str):
+    base_dir = Path(__file__).resolve().parents[2]
+    kb_dir = base_dir / "knowledge-base" / "documents"
+    safe_name = Path(filename).name
+    target = kb_dir / safe_name
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"Document '{safe_name}' not found.")
+    target.unlink()
+
+    index = build_index(sync_embeddings_now=True, force_recompute_embeddings=False)
+    cleared = clear_cache()
+    return {
+        "status": "success",
+        "message": f"Successfully deleted '{safe_name}' and updated real-time index.",
+        "filename": safe_name,
+        "chunks_indexed": len(index),
+        "cache_cleared": cleared,
+    }
+
+
+@app.post("/cache/clear")
+def flush_cache():
+    cleared = clear_cache()
+    return {
+        "status": "success",
+        "message": f"Successfully purged {cleared} entries from query cache.",
+        "cleared_entries": cleared,
+    }
 
 
 def synthesize_concise_answer(sources: List[Dict[str, Any]], question: str) -> Tuple[str, List[Dict[str, Any]]]:
     if not sources:
         return "The requested information is not available in the indexed documentation.", []
 
-    all_q_words = [
-        w.lower()
-        for w in re.findall(r"\b\w{3,}\b", question)
-        if w.lower() not in {"what", "is", "the", "for", "are", "and", "how", "can", "with", "does", "which"}
-    ]
-
-    matched_sentences = []
-    matched_sources = []
-
+    sections_info = []
     for s in sources:
-        content = s.get("content", "")
-        cleaned_content = re.sub(r"#+\s*", "", content)
-        sentences = [sen.strip() for sen in re.split(r"(?<=[.!?])\s+", cleaned_content) if len(sen.strip()) > 12]
+        sec_title = s.get("section", "General").strip()
+        content = s.get("content", "").strip()
+        # Clean markdown headers
+        cleaned = re.sub(r"^#+\s*.*$", "", content, flags=re.MULTILINE).strip()
+        paragraphs = [p.strip() for p in cleaned.split("\n\n") if len(p.strip()) > 8]
+        main_text = paragraphs[0] if paragraphs else cleaned
+        main_text = re.sub(r"\s+", " ", main_text).strip()
+        if main_text:
+            if sec_title and sec_title.lower() != "general":
+                sections_info.append(f"**{sec_title}**: {main_text}")
+            else:
+                sections_info.append(main_text)
 
-        source_matched = False
-        for sen in sentences:
-            sen_lower = sen.lower()
-            overlap = [w for w in all_q_words if w in sen_lower]
-            if overlap:
-                source_matched = True
-                if sen not in matched_sentences:
-                    matched_sentences.append(sen)
+    if not sections_info:
+        return "The requested details are specified in the documentation sources below.", sources[:1]
 
-        if source_matched:
-            matched_sources.append(s)
+    if len(sections_info) == 1:
+        answer = sections_info[0]
+    else:
+        # Each section on its own bullet line, separated by newlines for markdown rendering
+        bullets = "\n".join(f"• {s}" for s in sections_info[:3])
+        answer = f"Based on the technical documentation:\n\n{bullets}"
 
-    if not matched_sentences and sources:
-        top_s = sources[0]
-        cleaned_content = re.sub(r"#+\s*", "", top_s.get("content", ""))
-        sentences = [sen.strip() for sen in re.split(r"(?<=[.!?])\s+", cleaned_content) if len(sen.strip()) > 12]
-        matched_sentences = sentences[:2]
-        matched_sources = [top_s]
-
-    answer = " ".join(matched_sentences[:3])
-    if not answer.strip():
-        answer = "The requested information is detailed in the indexed documentation sources below."
-
-    return answer, matched_sources if matched_sources else sources[:1]
+    return answer, sources
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -223,6 +297,9 @@ def ask_question(body: QuestionRequest):
         raw_question = body.question.strip()
         if not raw_question:
             raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+        # Step 0: Real-time Knowledge Base Sync Check
+        ensure_realtime_sync()
 
         selected_model = body.model if body.model in REAL_MODEL_METRICS else "codellama:latest"
         model_stats = REAL_MODEL_METRICS.get(selected_model, REAL_MODEL_METRICS["codellama:latest"])
@@ -277,7 +354,14 @@ def ask_question(body: QuestionRequest):
             context_text = ""
         else:
             raw_answer = generate_answer(prompt, model=selected_model)
-            if "Error communicating with LLM" in raw_answer or "Network is unreachable" in raw_answer or "connection" in raw_answer.lower():
+            if (
+                "Error communicating with LLM" in raw_answer
+                or "Network is unreachable" in raw_answer
+                or "connection" in raw_answer.lower()
+                or "Grounded response: The requested details" in raw_answer
+                or "The requested details are specified" in raw_answer
+                or "Inference engine fallback:" in raw_answer
+            ):
                 if sources:
                     raw_answer, final_sources = synthesize_concise_answer(sources, clean_question)
                 else:
@@ -351,6 +435,11 @@ def real_time_sse_generator(body: QuestionRequest) -> Generator[str, None, None]
     raw_question = body.question.strip()
     selected_model = body.model if body.model in REAL_MODEL_METRICS else "codellama:latest"
     model_stats = REAL_MODEL_METRICS.get(selected_model, REAL_MODEL_METRICS["codellama:latest"])
+
+    # Step 0: Real-Time Knowledge Base Check
+    kb_synced = ensure_realtime_sync()
+    if kb_synced:
+        yield f"event: step\ndata: {json.dumps({'step': 'sync', 'status': 'updated', 'message': '⚡ Real-time change detected: updated vector index and purged stale cache.'})}\n\n"
 
     # 1. Pipeline Step: Input Guardrails
     yield f"event: step\ndata: {json.dumps({'step': 'guardrails', 'status': 'checking', 'message': 'Evaluating input security & PII sanitization filters...'})}\n\n"
@@ -440,11 +529,20 @@ def real_time_sse_generator(body: QuestionRequest) -> Generator[str, None, None]
         stream_failed = True
 
     raw_answer = "".join(accumulated_tokens).strip()
-    if stream_failed or not raw_answer or "Error communicating" in raw_answer:
+    is_placeholder = (
+        "Grounded response: The requested details" in raw_answer
+        or "The requested details are specified in the documentation" in raw_answer
+        or "Inference engine fallback:" in raw_answer
+        or "Documentation Assistant: Grounded response" in raw_answer
+    )
+    if stream_failed or not raw_answer or "Error communicating" in raw_answer or is_placeholder:
         raw_answer, final_sources = synthesize_concise_answer(sources, clean_question)
-        for word in raw_answer.split():
-            yield f"event: token\ndata: {json.dumps({'token': word + ' '})}\n\n"
-            time.sleep(0.02)
+        if not accumulated_tokens or is_placeholder:
+            # Send newline separation if placeholder was already partially sent
+            prefix = "\n\n" if is_placeholder else ""
+            for word in (prefix + raw_answer).split():
+                yield f"event: token\ndata: {json.dumps({'token': word + ' '})}\n\n"
+                time.sleep(0.02)
 
     # 5. Pipeline Step: Output Guardrails Check
     yield f"event: step\ndata: {json.dumps({'step': 'output_guardrails', 'status': 'verifying', 'message': 'Verifying groundedness and hallucination shield...'})}\n\n"

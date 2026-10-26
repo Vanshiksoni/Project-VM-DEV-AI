@@ -98,6 +98,28 @@ def record_saved_latency(latency: float) -> None:
     _CACHE_STATS["saved_latency_seconds"] += max(0.0, latency)
 
 
+def clear_cache() -> int:
+    """
+    Purges all cached query responses from both In-Memory and Redis tiers.
+    Ensures that updated documents immediately reflect in new chat queries.
+    Returns the count of purged items.
+    """
+    global _redis_available, _MEMORY_CACHE
+    cleared = len(_MEMORY_CACHE)
+    _MEMORY_CACHE.clear()
+
+    if _redis_available and _redis_client:
+        try:
+            keys = _redis_client.keys("rag:query:*")
+            if keys:
+                _redis_client.delete(*keys)
+                cleared += len(keys)
+        except Exception:
+            _redis_available = False
+
+    return cleared
+
+
 def get_cache_stats() -> Dict[str, Any]:
     total = _CACHE_STATS["hits"] + _CACHE_STATS["misses"]
     hit_ratio = (_CACHE_STATS["hits"] / total * 100.0) if total > 0 else 0.0

@@ -1,8 +1,16 @@
 import json
 import math
 import os
+import re
 from pathlib import Path
 import httpx
+
+RETRIEVAL_STOPWORDS = {
+    "what", "is", "a", "an", "the", "in", "on", "at", "to", "for", "of",
+    "with", "by", "from", "and", "or", "vs", "versus", "are", "how", "can",
+    "does", "do", "did", "which", "where", "when", "why", "who", "tell",
+    "me", "about", "explain", "between", "this", "that", "these", "those"
+}
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 EMBEDDINGS_FILE = DATA_DIR / "embeddings.json"
@@ -64,22 +72,38 @@ def retrieve_with_meta(question, top_k=2, similarity_threshold=DEFAULT_THRESHOLD
     try:
         query_embedding = embed_query(question)
     except Exception:
-        # Fallback to simple keyword match if embedding API is offline
-        results = []
+        # Fallback to smart lexical match if embedding API is offline
+        q_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9_\-]{3,}\b", question) if w.lower() not in RETRIEVAL_STOPWORDS]
+        if not q_words:
+            q_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9_\-]{3,}\b", question)]
+
+        scored = []
         for document in documents:
             content_lower = document["content"].lower()
-            matching_words = [w for w in query_lower.split() if len(w) > 3 and w in content_lower]
-            if matching_words:
-                score = min(0.95, 0.5 + (len(matching_words) * 0.30))
-                if score >= similarity_threshold:
-                    results.append({
-                        "id": document["id"],
-                        "filename": document["filename"],
-                        "section": document.get("section", "General"),
-                        "content": document["content"],
-                        "score": score,
-                    })
-        results.sort(key=lambda item: item["score"], reverse=True)
+            sec_lower = document.get("section", "").lower()
+            raw_score = 0.0
+            for w in q_words:
+                if re.search(r"\b" + re.escape(w), sec_lower):
+                    raw_score += 0.50
+                if re.search(r"\b" + re.escape(w), content_lower):
+                    raw_score += 0.35
+
+            if raw_score >= 0.30:
+                norm_score = min(0.98, round(0.50 + (raw_score * 0.22), 4))
+                if norm_score >= similarity_threshold:
+                    scored.append((
+                        raw_score,
+                        {
+                            "id": document["id"],
+                            "filename": document["filename"],
+                            "section": document.get("section", "General"),
+                            "content": document["content"],
+                            "score": norm_score,
+                        }
+                    ))
+
+        scored.sort(key=lambda item: (item[0], item[1]["score"]), reverse=True)
+        results = [item[1] for item in scored]
         if not results:
             return [], "NO_HIGH_CONFIDENCE_MATCH"
         return results[:top_k], None

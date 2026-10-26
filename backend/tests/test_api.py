@@ -90,3 +90,15 @@ def test_ask_stream_endpoint():
     text = response.text
     assert "event: step" in text or "event: token" in text or "event: done" in text
 
+
+def test_post_ask_docker_image_vs_container():
+    response = client.post("/ask", json={"question": "What is a Docker image vs container?"})
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["sources"]) >= 2
+    sections = [s["section"] for s in data["sources"]]
+    assert "Docker Image" in sections or "Docker Containers" in sections
+    # Ensure answer is not the generic placeholder
+    assert "The requested details are specified in the documentation" not in data["answer"]
+    assert "template" in data["answer"].lower() or "isolated" in data["answer"].lower() or "container" in data["answer"].lower()
+

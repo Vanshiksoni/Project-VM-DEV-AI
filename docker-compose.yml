@@ -23,6 +23,8 @@ services:
     build:
       context: .
       dockerfile: retrieval-service/Dockerfile
+    pull_policy: never
+    image: devassist-ai-retrieval-service:latest
     container_name: devassist-retrieval
     ports:
       - "8001:8001"
@@ -31,6 +33,8 @@ services:
       - EMBED_MODEL=nomic-embed-text
       - SIMILARITY_THRESHOLD=0.60
       - DATA_DIR=/app/data
+    volumes:
+      - shared-data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -42,6 +46,8 @@ services:
     build:
       context: .
       dockerfile: llm-service/Dockerfile
+    pull_policy: never
+    image: devassist-ai-llm-service:latest
     container_name: devassist-llm
     ports:
       - "8002:8002"
@@ -59,6 +65,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    pull_policy: never
+    image: devassist-ai-backend:latest
     container_name: devassist-backend
     ports:
       - "8000:8000"
@@ -70,6 +78,9 @@ services:
       - LLM_MODEL=codellama:latest
       - EMBED_MODEL=nomic-embed-text
       - SIMILARITY_THRESHOLD=0.60
+    volumes:
+      - shared-data:/app/data
+      - ./knowledge-base:/app/knowledge-base
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -90,6 +101,8 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         VITE_API_URL: /api
+    pull_policy: never
+    image: devassist-ai-frontend:latest
     container_name: devassist-frontend
     ports:
       - "80:80"
@@ -105,3 +118,4 @@ networks:
 
 volumes:
   redis-data:
+  shared-data:

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from typing import Optional, Generator
 from fastapi import FastAPI, HTTPException
@@ -37,6 +38,59 @@ def build_full_prompt(prompt: str, context: Optional[str]) -> str:
         f"USER QUESTION: {prompt}\n\n"
         "Grounded Answer:"
     )
+
+
+def extract_grounded_answer_from_prompt(prompt: str, context: Optional[str] = None) -> str:
+    """
+    Intelligently extracts and formats grounded answers directly from the documentation
+    context when Ollama is offline or unreachable.
+    """
+    full_text = f"{context or ''}\n{prompt}"
+    context_text = ""
+    if "DOCUMENTATION CONTEXT:" in full_text:
+        parts = full_text.split("DOCUMENTATION CONTEXT:", 1)[1]
+        context_text = parts.split("USER QUESTION:", 1)[0].strip()
+    elif "--- CONTEXT ---" in full_text:
+        parts = full_text.split("--- CONTEXT ---", 1)[1]
+        context_text = parts.split("--- END CONTEXT ---", 1)[0].strip()
+    else:
+        context_text = full_text
+
+    section_blocks = re.findall(
+        r"(?:Section:\s*([^\n]+)\s*\nContent:\s*|##\s*([^\n]+)\s*\n)([\s\S]*?)(?=(?:Source File:|---|Section:|##|USER QUESTION:|$))",
+        context_text
+    )
+
+    formatted = []
+    if section_blocks:
+        for block in section_blocks:
+            title = (block[0] or block[1] or "").strip()
+            body = (block[2] or "").strip()
+            cleaned_body = re.sub(r"^#+\s*.*$", "", body, flags=re.MULTILINE).strip()
+            paras = [p.strip() for p in cleaned_body.split("\n\n") if len(p.strip()) > 8]
+            if paras:
+                first_p = re.sub(r"\s+", " ", paras[0]).strip()
+                if title and title.lower() != "general":
+                    formatted.append(f"• **{title}**: {first_p}")
+                else:
+                    formatted.append(f"• {first_p}")
+
+    if formatted:
+        if len(formatted) == 1:
+            return formatted[0].lstrip("• ").strip()
+        return "Based on the technical documentation:\n\n" + "\n\n".join(formatted[:3])
+
+    # Fallback to sentences if no structured sections found
+    cleaned = re.sub(r"#+\s*", "", context_text)
+    sentences = [
+        sen.strip()
+        for sen in re.split(r"(?<=[.!?])\s+", cleaned)
+        if len(sen.strip()) > 20 and not any(k in sen.lower() for k in ["you are devassist", "rules:", "documentation context:", "user question:"])
+    ]
+    if sentences:
+        return " ".join(sentences[:3])
+
+    return "The requested information is detailed in the indexed documentation sources."
 
 
 @app.get("/")
@@ -96,10 +150,10 @@ def generate(req: GenerateRequest):
                 "total_duration": data.get("total_duration", 0),
             }
     except Exception as exc:
-        # Fallback response for offline or simulated test environments
+        fallback_ans = extract_grounded_answer_from_prompt(full_prompt, req.context)
         return {
             "model": model,
-            "response": f"Documentation Assistant: Grounded response for '{req.prompt}'.",
+            "response": fallback_ans,
             "fallback": True,
             "detail": str(exc),
         }
@@ -139,10 +193,10 @@ def stream_generator(req: GenerateRequest) -> Generator[str, None, None]:
                     except Exception:
                         continue
     except Exception as exc:
-        fallback_text = f"Grounded response: The requested details are specified in the documentation."
+        fallback_text = extract_grounded_answer_from_prompt(full_prompt, req.context)
         for word in fallback_text.split():
             yield f"data: {json.dumps({'token': word + ' '})}\n\n"
-            time.sleep(0.04)
+            time.sleep(0.02)
         yield f"data: {json.dumps({'done': True, 'fallback': True})}\n\n"
 
 

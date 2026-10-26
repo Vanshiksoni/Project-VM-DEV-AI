@@ -37,37 +37,51 @@ def mock_ollama_if_offline(monkeypatch):
     def mock_embed_query(question: str):
         q_lower = question.lower()
 
+        active_docs = embeddings_data
+        if EMBEDDINGS_FILE.exists():
+            try:
+                active_docs = json.loads(EMBEDDINGS_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                active_docs = embeddings_data
+
         # Map common query keywords to actual pre-computed chunk embeddings for accurate similarity scores in CI
         if "compose" in q_lower:
             # Chunk 5: Docker Compose
-            for doc in embeddings_data:
+            for doc in active_docs:
                 if doc["id"] == 5:
                     return doc["embedding"]
         elif "image" in q_lower:
             # Chunk 4: Docker Image
-            for doc in embeddings_data:
+            for doc in active_docs:
                 if doc["id"] == 4:
                     return doc["embedding"]
         elif "file" in q_lower:
             # Chunk 3: Dockerfile
-            for doc in embeddings_data:
+            for doc in active_docs:
                 if doc["id"] == 3:
                     return doc["embedding"]
         elif "stop" in q_lower:
             # Chunk 9: Stop a container
-            for doc in embeddings_data:
+            for doc in active_docs:
                 if doc["id"] == 9:
                     return doc["embedding"]
         elif "list" in q_lower or "ps" in q_lower:
             # Chunk 8: List running containers
-            for doc in embeddings_data:
+            for doc in active_docs:
                 if doc["id"] == 8:
                     return doc["embedding"]
         elif "docker" in q_lower:
             # Chunk 1: What is Docker?
-            for doc in embeddings_data:
+            for doc in active_docs:
                 if doc["id"] == 1:
                     return doc["embedding"]
+
+        # Support dynamically added real-time documents by matching keyword overlap
+        for doc in active_docs:
+            content_lower = doc.get("content", "").lower()
+            matching = [w for w in q_lower.split() if len(w) > 3 and w in content_lower]
+            if len(matching) >= 2 and doc.get("embedding"):
+                return doc["embedding"]
 
         # Out-of-domain query mock embedding (all zeros, 0.0 similarity)
         return [0.0] * 768

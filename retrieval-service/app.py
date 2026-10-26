@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException
@@ -32,6 +33,13 @@ OUT_OF_KB_KEYWORDS = [
     "transport", "hostel", "dorm", "party", "parties",
     "movie", "game", "gaming", "shoe", "shirt", "quantum computing"
 ]
+
+RETRIEVAL_STOPWORDS = {
+    "what", "is", "a", "an", "the", "in", "on", "at", "to", "for", "of",
+    "with", "by", "from", "and", "or", "vs", "versus", "are", "how", "can",
+    "does", "do", "did", "which", "where", "when", "why", "who", "tell",
+    "me", "about", "explain", "between", "this", "that", "these", "those"
+}
 
 
 class SearchRequest(BaseModel):
@@ -166,30 +174,46 @@ def search_documents(req: SearchRequest):
             refusal_reason=None
         )
     except Exception:
-        # Fallback to lexical keyword matching if embedding API is offline
+        # Fallback to smart lexical keyword matching if embedding API is offline
+        q_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9_\-]{3,}\b", query) if w.lower() not in RETRIEVAL_STOPWORDS]
+        if not q_words:
+            q_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9_\-]{3,}\b", query)]
+
         scored = []
         for doc in documents:
             content_lower = doc.get("content", "").lower()
-            overlap = [w for w in query_lower.split() if len(w) > 3 and w in content_lower]
-            if overlap:
-                score = min(0.95, 0.5 + (len(overlap) * 0.30))
-                if score >= req.similarity_threshold:
+            sec_lower = doc.get("section", "").lower()
+            raw_score = 0.0
+            for w in q_words:
+                if re.search(r"\b" + re.escape(w), sec_lower):
+                    raw_score += 0.50
+                if re.search(r"\b" + re.escape(w), content_lower):
+                    raw_score += 0.35
+
+            if raw_score >= 0.30:
+                norm_score = min(0.98, round(0.50 + (raw_score * 0.22), 4))
+                if norm_score >= req.similarity_threshold:
                     scored.append(
-                        SearchResultItem(
-                            id=doc["id"],
-                            filename=doc.get("filename", "unknown"),
-                            section=doc.get("section", "General"),
-                            content=doc.get("content", ""),
-                            score=round(score, 4),
+                        (
+                            raw_score,
+                            SearchResultItem(
+                                id=doc["id"],
+                                filename=doc.get("filename", "unknown"),
+                                section=doc.get("section", "General"),
+                                content=doc.get("content", ""),
+                                score=norm_score,
+                            )
                         )
                     )
-        scored.sort(key=lambda x: x.score, reverse=True)
+
+        scored.sort(key=lambda x: (x[0], x[1].score), reverse=True)
+        results = [item[1] for item in scored]
         return SearchResponse(
             query=query,
-            results=scored[:req.top_k],
+            results=results[:req.top_k],
             top_k=req.top_k,
             similarity_threshold=req.similarity_threshold,
-            refusal_reason=None if scored else "NO_HIGH_CONFIDENCE_MATCH"
+            refusal_reason=None if results else "NO_HIGH_CONFIDENCE_MATCH"
         )
 
 
@@ -214,3 +238,21 @@ def list_documents():
         }
     except Exception as exc:
         return {"error": str(exc), "total_chunks": 0}
+
+
+@app.post("/index")
+@app.post("/reindex")
+def reload_index():
+    indexed_count = 0
+    if EMBEDDINGS_FILE.exists():
+        try:
+            docs = json.loads(EMBEDDINGS_FILE.read_text(encoding="utf-8"))
+            indexed_count = len(docs)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to read index: {str(exc)}")
+    return {
+        "status": "success",
+        "service": "retrieval-service",
+        "message": f"Successfully loaded {indexed_count} active vector chunks in real time.",
+        "indexed_chunks": indexed_count
+    }

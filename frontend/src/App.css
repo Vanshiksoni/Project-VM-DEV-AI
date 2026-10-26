@@ -777,3 +777,53 @@ pre.code-block {
 .action-btn:hover {
   opacity: 0.9;
 }
+
+/* ── Markdown Renderer Styles ─────────────────────────────────────── */
+.markdown-body {
+  line-height: 1.75;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.markdown-body p {
+  margin: 0 0 8px 0;
+  line-height: 1.75;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 6px 0 10px 20px;
+  padding: 0;
+}
+
+.markdown-body li {
+  margin-bottom: 4px;
+  line-height: 1.7;
+}
+
+.markdown-body strong {
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.markdown-body code {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: var(--accent-amber);
+}
+
+[data-theme="light"] .markdown-body strong {
+  color: #0369a1;
+}
+
+[data-theme="light"] .markdown-body code {
+  background: rgba(0, 0, 0, 0.06);
+  color: #b45309;
+}
