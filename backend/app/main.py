@@ -258,32 +258,37 @@ def synthesize_concise_answer(sources: List[Dict[str, Any]], question: str) -> T
     if not sources:
         return "The requested information is not available in the indexed documentation.", []
 
-    sections_info = []
+    q_lower = question.lower()
+    q_words = [
+        w for w in re.findall(r"\b\w{3,}\b", q_lower)
+        if w not in {"what", "is", "the", "for", "are", "and", "how", "can", "with", "does", "which", "about", "tell"}
+    ]
+
+    # Select the single best matching source that directly answers the asked question
+    best_source = sources[0]
+    best_score = -1
+
     for s in sources:
-        sec_title = s.get("section", "General").strip()
-        content = s.get("content", "").strip()
-        # Clean markdown headers
-        cleaned = re.sub(r"^#+\s*.*$", "", content, flags=re.MULTILINE).strip()
-        paragraphs = [p.strip() for p in cleaned.split("\n\n") if len(p.strip()) > 8]
-        main_text = paragraphs[0] if paragraphs else cleaned
-        main_text = re.sub(r"\s+", " ", main_text).strip()
-        if main_text:
-            if sec_title and sec_title.lower() != "general":
-                sections_info.append(f"**{sec_title}**: {main_text}")
-            else:
-                sections_info.append(main_text)
+        sec = s.get("section", "").lower()
+        content = s.get("content", "").lower()
+        score = sum(5 for w in q_words if w in sec) + sum(1 for w in q_words if w in content)
+        if score > best_score:
+            best_score = score
+            best_source = s
 
-    if not sections_info:
-        return "The requested details are specified in the documentation sources below.", sources[:1]
+    content = best_source.get("content", "").strip()
 
-    if len(sections_info) == 1:
-        answer = sections_info[0]
-    else:
-        # Each section on its own bullet line, separated by newlines for markdown rendering
-        bullets = "\n".join(f"• {s}" for s in sections_info[:3])
-        answer = f"Based on the technical documentation:\n\n{bullets}"
+    # Clean markdown headers and extract the main direct paragraph
+    cleaned = re.sub(r"^#+\s*.*$", "", content, flags=re.MULTILINE).strip()
+    paragraphs = [p.strip() for p in cleaned.split("\n\n") if len(p.strip()) > 8]
+    main_text = paragraphs[0] if paragraphs else cleaned
+    main_text = re.sub(r"\s+", " ", main_text).strip()
 
-    return answer, sources
+    if not main_text:
+        return "The requested details are specified in the documentation sources below.", [best_source]
+
+    return main_text, [best_source]
+
 
 
 @app.post("/ask", response_model=AskResponse)

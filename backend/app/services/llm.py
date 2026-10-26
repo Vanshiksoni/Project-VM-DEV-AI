@@ -15,8 +15,14 @@ DEFAULT_MODEL = os.getenv("LLM_MODEL", "codellama:latest")
 def extract_grounded_answer_from_prompt(prompt: str) -> str:
     """
     Intelligently extracts and formats grounded answers directly from the technical context
-    when Ollama inference is offline or in simulated/fallback test mode.
+    for the specific question asked, when Ollama inference is offline or in test mode.
     """
+    user_q = ""
+    if "USER QUESTION:" in prompt:
+        user_q = prompt.split("USER QUESTION:", 1)[1].strip().lower()
+    elif "Answer the following question directly:" in prompt:
+        user_q = prompt.split("Answer the following question directly:", 1)[1].strip().lower()
+
     context_text = ""
     if "DOCUMENTATION CONTEXT:" in prompt:
         parts = prompt.split("DOCUMENTATION CONTEXT:", 1)[1]
@@ -32,7 +38,12 @@ def extract_grounded_answer_from_prompt(prompt: str) -> str:
         context_text
     )
 
-    formatted = []
+    q_words = [
+        w for w in re.findall(r"\b\w{3,}\b", user_q)
+        if w not in {"what", "is", "the", "for", "are", "and", "how", "can", "with", "does", "which", "about", "tell"}
+    ]
+
+    candidates = []
     if section_blocks:
         for block in section_blocks:
             title = (block[0] or block[1] or "").strip()
@@ -41,15 +52,13 @@ def extract_grounded_answer_from_prompt(prompt: str) -> str:
             paras = [p.strip() for p in cleaned_body.split("\n\n") if len(p.strip()) > 8]
             if paras:
                 first_p = re.sub(r"\s+", " ", paras[0]).strip()
-                if title and title.lower() != "general":
-                    formatted.append(f"• **{title}**: {first_p}")
-                else:
-                    formatted.append(f"• {first_p}")
+                score = sum(5 for w in q_words if w in title.lower()) + sum(1 for w in q_words if w in first_p.lower())
+                candidates.append((score, title, first_p))
 
-    if formatted:
-        if len(formatted) == 1:
-            return formatted[0].lstrip("• ").strip()
-        return "Based on the technical documentation:\n\n" + "\n\n".join(formatted[:3])
+    if candidates:
+        # Pick the single best answering section for this specific question
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][2]
 
     cleaned = re.sub(r"#+\s*", "", context_text)
     sentences = [
@@ -58,9 +67,10 @@ def extract_grounded_answer_from_prompt(prompt: str) -> str:
         if len(sen.strip()) > 20 and not any(k in sen.lower() for k in ["you are devassist", "rules:", "documentation context:", "user question:"])
     ]
     if sentences:
-        return " ".join(sentences[:3])
+        return " ".join(sentences[:2])
 
     return "The requested information is detailed in the indexed documentation sources."
+
 
 
 def generate_answer(prompt: str, model: str = DEFAULT_MODEL) -> str:
